@@ -38,6 +38,8 @@ mkdir -p dev-browser/tmp
 
 ### Basic Template
 
+Always use the package name `dev-browser/client`.
+
 ```typescript
 import { connect } from "dev-browser/client";
 
