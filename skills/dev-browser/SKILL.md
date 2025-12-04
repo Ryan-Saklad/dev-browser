@@ -17,13 +17,17 @@ Browser automation that maintains page state across script executions. Write sma
 
 ## Setup
 
-First, install dependencies and start the dev-browser server:
-
-You should make sure to run it in the background
+First, start the dev-browser server. It will automatically install Chromium on first run if needed:
 
 ```bash
 cd dev-browser && bun run start-server &
 ```
+
+The server automatically:
+
+- Creates the `tmp/` directory for scripts
+- Creates the `profiles/` directory for browser data persistence
+- Installs Playwright Chromium browser if not already installed
 
 **Important:** Scripts must be run with `bun x tsx` (not `bun run`) due to Playwright WebSocket compatibility:
 
