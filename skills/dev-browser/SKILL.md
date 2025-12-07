@@ -94,6 +94,25 @@ EOF
 2. **Evaluate state**: Always log/return state at the end to decide next steps
 3. **Use page names**: Use descriptive names like `"checkout"`, `"login"`, `"search-results"`
 4. **Disconnect to exit**: Call `await client.disconnect()` at the end of your script so the process exits cleanly. Pages persist on the server.
+5. **Plain JS in evaluate**: Always use plain JavaScript inside `page.evaluate()` callbacks—never TypeScript. The code runs in the browser which doesn't understand TS syntax.
+
+### Important Notes
+
+- **tsx runs without type-checking**: Scripts run with `bun x tsx` which transpiles TypeScript but does NOT type-check. Type errors won't prevent execution—they're just ignored.
+- **No TypeScript in browser context**: Code passed to `page.evaluate()`, `page.evaluateHandle()`, or similar methods runs in the browser. Use plain JavaScript only:
+
+```typescript
+// ✅ Correct: plain JavaScript in evaluate
+const text = await page.evaluate(() => {
+  return document.body.innerText;
+});
+
+// ❌ Wrong: TypeScript syntax in evaluate (will fail at runtime)
+const text = await page.evaluate(() => {
+  const el: HTMLElement = document.body; // TS syntax - don't do this!
+  return el.innerText;
+});
+```
 
 ## Workflow Loop
 
