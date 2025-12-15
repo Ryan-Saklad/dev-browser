@@ -4,6 +4,7 @@ import { mkdirSync, existsSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { createServer } from "net";
+import { randomBytes } from "crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const tmpDir = join(__dirname, "..", "tmp");
@@ -112,8 +113,19 @@ const host = process.env.DEV_BROWSER_HOST || "127.0.0.1";
 const preferredPort = Number(process.env.DEV_BROWSER_PORT || 9222);
 const preferredCdpPort = Number(process.env.DEV_BROWSER_CDP_PORT || 9223);
 const allowRemote = process.env.DEV_BROWSER_ALLOW_REMOTE === "true";
-const authToken = process.env.DEV_BROWSER_TOKEN;
-const requireAuth = process.env.DEV_BROWSER_REQUIRE_AUTH === "true";
+const lockdown = process.env.DEV_BROWSER_LOCKDOWN === "true";
+let authToken = process.env.DEV_BROWSER_TOKEN;
+const requireAuth = lockdown || process.env.DEV_BROWSER_REQUIRE_AUTH === "true";
+const allowedHosts = process.env.DEV_BROWSER_ALLOWED_HOSTS
+  ? process.env.DEV_BROWSER_ALLOWED_HOSTS.split(",").map((s) => s.trim()).filter(Boolean)
+  : undefined;
+const tmpDirEnv = process.env.DEV_BROWSER_TMP_DIR;
+
+if (requireAuth && !authToken) {
+  authToken = randomBytes(32).toString("hex");
+  console.log("Generated DEV_BROWSER_TOKEN (not set in env).");
+  console.log(`  DEV_BROWSER_TOKEN=${authToken}`);
+}
 
 const port = await choosePort(preferredPort, host, "HTTP");
 const cdpPort = await choosePort(preferredCdpPort, host, "CDP");
@@ -128,11 +140,18 @@ const server = await serve({
   allowRemote,
   authToken,
   requireAuth,
+  lockdown,
+  allowedHosts,
+  tmpDir: tmpDirEnv,
 });
 
 console.log(`Dev browser server started`);
 console.log(`  HTTP API: http://${host}:${server.port}`);
-console.log(`  WebSocket: ${server.wsEndpoint}`);
+if (lockdown) {
+  console.log(`  Mode: lockdown (no wsEndpoint exposed)`);
+} else {
+  console.log(`  WebSocket: ${server.wsEndpoint}`);
+}
 console.log(`  Tmp directory: ${tmpDir}`);
 console.log(`  Profile directory: ${profileDir}`);
 console.log(`\nReady`);

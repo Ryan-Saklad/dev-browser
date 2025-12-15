@@ -265,6 +265,11 @@ export async function connect(serverUrl: string, options: ConnectOptions = {}): 
         }
         const info = (await res.json()) as ServerInfoResponse;
         wsEndpoint = info.wsEndpoint;
+        if (!wsEndpoint) {
+          throw new Error(
+            "Server is running in lockdown mode and does not expose a wsEndpoint. Use connectLockedDown()."
+          );
+        }
 
         // Connect to the browser via CDP
         browser = await chromium.connectOverCDP(wsEndpoint);
@@ -321,7 +326,13 @@ export async function connect(serverUrl: string, options: ConnectOptions = {}): 
       throw new Error(`Failed to get page: ${await res.text()}`);
     }
 
-    const { targetId } = (await res.json()) as GetPageResponse;
+    const data = (await res.json()) as GetPageResponse;
+    if (!data.targetId) {
+      throw new Error(
+        "Server did not return a targetId. If the server is in lockdown mode, use connectLockedDown()."
+      );
+    }
+    const { targetId } = data;
 
     // Connect to browser
     const b = await ensureConnected();
@@ -413,6 +424,137 @@ export async function connect(serverUrl: string, options: ConnectOptions = {}): 
       }
 
       return element;
+    },
+  };
+}
+
+export interface LockedDownPage {
+  goto: (url: string) => Promise<{ url: string; title: string }>;
+  getAISnapshot: () => Promise<string>;
+  clickRef: (ref: string) => Promise<void>;
+  fillRef: (ref: string, text: string) => Promise<void>;
+  press: (key: string) => Promise<void>;
+  screenshot: (path: string, fullPage?: boolean) => Promise<string>;
+  close: () => Promise<void>;
+}
+
+export interface LockedDownClient {
+  page: (name: string) => Promise<LockedDownPage>;
+  list: () => Promise<string[]>;
+  close: (name: string) => Promise<void>;
+}
+
+export async function connectLockedDown(
+  serverUrl: string,
+  options: ConnectOptions = {}
+): Promise<LockedDownClient> {
+  const token = options.token ?? process.env.DEV_BROWSER_TOKEN;
+
+  async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+    const headers = new Headers(init.headers);
+    if (token) headers.set("x-dev-browser-token", token);
+    return await fetch(input, { ...init, headers });
+  }
+
+  // Verify server mode early (best effort)
+  const infoRes = await apiFetch(serverUrl);
+  if (!infoRes.ok) {
+    throw new Error(`Server returned ${infoRes.status}: ${await infoRes.text()}`);
+  }
+  const info = (await infoRes.json()) as ServerInfoResponse;
+  if (info.wsEndpoint) {
+    throw new Error("Server is not in lockdown mode (wsEndpoint is present). Use connect().");
+  }
+
+  async function ensurePageExists(name: string): Promise<void> {
+    const res = await apiFetch(`${serverUrl}/pages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name } satisfies GetPageRequest),
+    });
+    if (!res.ok) throw new Error(`Failed to get page: ${await res.text()}`);
+    await res.json().catch(() => undefined);
+  }
+
+  return {
+    async page(name: string): Promise<LockedDownPage> {
+      await ensurePageExists(name);
+
+      return {
+        async goto(url: string) {
+          const res = await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}/goto`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+          if (!res.ok) throw new Error(`Failed to goto: ${await res.text()}`);
+          const data = (await res.json()) as { url: string; title: string };
+          return data;
+        },
+
+        async getAISnapshot() {
+          const res = await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}/snapshot`, {
+            method: "POST",
+          });
+          if (!res.ok) throw new Error(`Failed to get snapshot: ${await res.text()}`);
+          const data = (await res.json()) as { snapshot: string };
+          return data.snapshot;
+        },
+
+        async clickRef(ref: string) {
+          const res = await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}/click-ref`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ref }),
+          });
+          if (!res.ok) throw new Error(`Failed to click ref: ${await res.text()}`);
+        },
+
+        async fillRef(ref: string, text: string) {
+          const res = await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}/fill-ref`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ref, text }),
+          });
+          if (!res.ok) throw new Error(`Failed to fill ref: ${await res.text()}`);
+        },
+
+        async press(key: string) {
+          const res = await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}/press`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key }),
+          });
+          if (!res.ok) throw new Error(`Failed to press: ${await res.text()}`);
+        },
+
+        async screenshot(path: string, fullPage?: boolean) {
+          const res = await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}/screenshot`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path, fullPage }),
+          });
+          if (!res.ok) throw new Error(`Failed to screenshot: ${await res.text()}`);
+          const data = (await res.json()) as { path: string };
+          return data.path;
+        },
+
+        async close() {
+          await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}`, { method: "DELETE" });
+        },
+      };
+    },
+
+    async list(): Promise<string[]> {
+      const res = await apiFetch(`${serverUrl}/pages`);
+      if (!res.ok) throw new Error(`Failed to list pages: ${await res.text()}`);
+      const data = (await res.json()) as ListPagesResponse;
+      return data.pages;
+    },
+
+    async close(name: string): Promise<void> {
+      const res = await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Failed to close page: ${await res.text()}`);
     },
   };
 }

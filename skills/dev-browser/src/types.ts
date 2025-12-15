@@ -11,6 +11,17 @@ export interface ServeOptions {
   /** Directory to store persistent browser profiles (cookies, localStorage, etc.) */
   profileDir?: string;
   /**
+   * Locked-down mode:
+   * - does NOT open a CDP TCP port
+   * - does NOT return a wsEndpoint for remote scripting
+   * - exposes a small, authenticated HTTP API for safe-ish actions
+   */
+  lockdown?: boolean;
+  /** Comma-separated allowlist of hostnames for navigation/requests in lockdown mode */
+  allowedHosts?: string[];
+  /** Directory for artifacts like screenshots in lockdown mode */
+  tmpDir?: string;
+  /**
    * If true, allows binding to non-loopback interfaces (e.g. 0.0.0.0).
    * Strongly discouraged unless you understand CDP exposure risks.
    */
@@ -32,9 +43,9 @@ export interface GetPageRequest {
 }
 
 export interface GetPageResponse {
-  wsEndpoint: string;
+  wsEndpoint: string | null;
   name: string;
-  targetId: string; // CDP target ID for reliable page matching
+  targetId?: string; // CDP target ID (only in non-lockdown / CDP mode)
 }
 
 export interface ListPagesResponse {
@@ -42,5 +53,6 @@ export interface ListPagesResponse {
 }
 
 export interface ServerInfoResponse {
-  wsEndpoint: string;
+  wsEndpoint: string | null;
+  mode?: "cdp" | "lockdown";
 }

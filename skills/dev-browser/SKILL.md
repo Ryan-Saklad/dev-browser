@@ -64,6 +64,44 @@ If you want to require a token for the HTTP API, set:
 
 Client scripts will send `DEV_BROWSER_TOKEN` automatically, or you can pass it explicitly to `connect()`.
 
+### Lockdown Mode (Recommended for Internal Apps)
+
+Lockdown mode is designed for “internal app only” usage:
+
+- No CDP TCP port is opened
+- No browser websocket endpoint is exposed
+- Only an authenticated HTTP API for a small set of actions is available
+- Optional hostname allowlist blocks unexpected navigation/requests
+
+Enable it with:
+
+- `DEV_BROWSER_LOCKDOWN=true`
+- `DEV_BROWSER_TOKEN=...` (required; `start-server` will generate one if missing)
+- `DEV_BROWSER_ALLOWED_HOSTS=localhost,127.0.0.1,::1,internal.dev` (optional; defaults to loopback)
+
+Then write scripts using `connectLockedDown()`:
+
+```bash
+cd skills/dev-browser && bun x tsx <<'EOF'
+import { connectLockedDown } from "@/client.js";
+
+const client = await connectLockedDown("http://127.0.0.1:9222", {
+  token: process.env.DEV_BROWSER_TOKEN,
+});
+
+const page = await client.page("main");
+await page.goto("http://127.0.0.1:3000");
+
+const snapshot = await page.getAISnapshot();
+console.log(snapshot);
+
+// Example: click a discovered ref like e12
+// await page.clickRef("e12");
+
+await page.screenshot("lockdown.png", true);
+EOF
+```
+
 ## How It Works
 
 1. **Server** launches a persistent Chromium browser and manages named pages via REST API
