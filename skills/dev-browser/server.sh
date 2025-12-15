@@ -17,7 +17,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 echo "Installing dependencies..."
-bun i
+bun install --frozen-lockfile
 
 echo "Starting dev-browser server..."
 export HEADLESS=$HEADLESS

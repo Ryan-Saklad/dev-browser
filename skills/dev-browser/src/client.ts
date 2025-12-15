@@ -224,10 +224,25 @@ export interface DevBrowserClient {
   selectSnapshotRef: (name: string, ref: string) => Promise<ElementHandle | null>;
 }
 
-export async function connect(serverUrl: string): Promise<DevBrowserClient> {
+export interface ConnectOptions {
+  /**
+   * Optional token for the HTTP API when the server requires auth.
+   * Defaults to DEV_BROWSER_TOKEN env var.
+   */
+  token?: string;
+}
+
+export async function connect(serverUrl: string, options: ConnectOptions = {}): Promise<DevBrowserClient> {
   let browser: Browser | null = null;
   let wsEndpoint: string | null = null;
   let connectingPromise: Promise<Browser> | null = null;
+  const token = options.token ?? process.env.DEV_BROWSER_TOKEN;
+
+  async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+    const headers = new Headers(init.headers);
+    if (token) headers.set("x-dev-browser-token", token);
+    return await fetch(input, { ...init, headers });
+  }
 
   async function ensureConnected(): Promise<Browser> {
     // Return existing connection if still active
@@ -244,7 +259,7 @@ export async function connect(serverUrl: string): Promise<DevBrowserClient> {
     connectingPromise = (async () => {
       try {
         // Fetch wsEndpoint from server
-        const res = await fetch(serverUrl);
+        const res = await apiFetch(serverUrl);
         if (!res.ok) {
           throw new Error(`Server returned ${res.status}: ${await res.text()}`);
         }
@@ -296,7 +311,7 @@ export async function connect(serverUrl: string): Promise<DevBrowserClient> {
   // Helper to get a page by name (used by multiple methods)
   async function getPage(name: string): Promise<Page> {
     // Request the page from server (creates if doesn't exist)
-    const res = await fetch(`${serverUrl}/pages`, {
+    const res = await apiFetch(`${serverUrl}/pages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name } satisfies GetPageRequest),
@@ -324,13 +339,13 @@ export async function connect(serverUrl: string): Promise<DevBrowserClient> {
     page: getPage,
 
     async list(): Promise<string[]> {
-      const res = await fetch(`${serverUrl}/pages`);
+      const res = await apiFetch(`${serverUrl}/pages`);
       const data = (await res.json()) as ListPagesResponse;
       return data.pages;
     },
 
     async close(name: string): Promise<void> {
-      const res = await fetch(`${serverUrl}/pages/${encodeURIComponent(name)}`, {
+      const res = await apiFetch(`${serverUrl}/pages/${encodeURIComponent(name)}`, {
         method: "DELETE",
       });
 

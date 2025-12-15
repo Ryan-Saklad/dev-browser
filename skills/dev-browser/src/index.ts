@@ -3,6 +3,7 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 import { mkdirSync } from "fs";
 import { join } from "path";
 import type { Socket } from "net";
+import { isIP } from "net";
 import type {
   ServeOptions,
   GetPageRequest,
@@ -53,9 +54,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
 
 export async function serve(options: ServeOptions = {}): Promise<DevBrowserServer> {
   const port = options.port ?? 9222;
+  const host = options.host ?? "127.0.0.1";
   const headless = options.headless ?? false;
   const cdpPort = options.cdpPort ?? 9223;
+  const cdpHost = options.cdpHost ?? "127.0.0.1";
   const profileDir = options.profileDir;
+  const allowRemote = options.allowRemote ?? false;
+
+  const authToken = options.authToken ?? process.env.DEV_BROWSER_TOKEN;
+  const requireAuth = options.requireAuth ?? Boolean(authToken);
 
   // Validate port numbers
   if (port < 1 || port > 65535) {
@@ -66,6 +73,33 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
   }
   if (port === cdpPort) {
     throw new Error("port and cdpPort must be different");
+  }
+
+  function isLoopbackHost(h: string): boolean {
+    if (h === "localhost" || h === "127.0.0.1" || h === "::1") return true;
+    const ipVersion = isIP(h);
+    if (ipVersion === 4) return h.startsWith("127.");
+    if (ipVersion === 6) return h === "::1";
+    return false;
+  }
+
+  if (!allowRemote) {
+    if (!isLoopbackHost(host)) {
+      throw new Error(
+        `Refusing to bind HTTP server to non-loopback host "${host}". Set allowRemote: true if you really want this.`
+      );
+    }
+    if (!isLoopbackHost(cdpHost)) {
+      throw new Error(
+        `Refusing to bind CDP server to non-loopback host "${cdpHost}". Set allowRemote: true if you really want this.`
+      );
+    }
+  }
+
+  if (requireAuth && !authToken) {
+    throw new Error(
+      "HTTP auth is required but no token was provided. Set DEV_BROWSER_TOKEN or pass authToken."
+    );
   }
 
   // Determine user data directory for persistent context
@@ -82,12 +116,15 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
   // Launch persistent context - this persists cookies, localStorage, cache, etc.
   const context: BrowserContext = await chromium.launchPersistentContext(userDataDir, {
     headless,
-    args: [`--remote-debugging-port=${cdpPort}`],
+    args: [
+      `--remote-debugging-port=${cdpPort}`,
+      `--remote-debugging-address=${cdpHost}`,
+    ],
   });
   console.log("Browser launched with persistent profile...");
 
   // Get the CDP WebSocket endpoint from Chrome's JSON API (with retry for slow startup)
-  const cdpResponse = await fetchWithRetry(`http://127.0.0.1:${cdpPort}/json/version`);
+  const cdpResponse = await fetchWithRetry(`http://${cdpHost}:${cdpPort}/json/version`);
   const cdpInfo = (await cdpResponse.json()) as { webSocketDebuggerUrl: string };
   const wsEndpoint = cdpInfo.webSocketDebuggerUrl;
   console.log(`CDP WebSocket endpoint: ${wsEndpoint}`);
@@ -116,6 +153,31 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
   const app: Express = express();
   app.use(express.json());
 
+  if (requireAuth) {
+    app.use((req: Request, res: Response, next) => {
+      const header = String(req.headers.authorization || "");
+      const bearerPrefix = "Bearer ";
+      const bearer = header.startsWith(bearerPrefix) ? header.slice(bearerPrefix.length) : null;
+      const tokenHeader = req.headers["x-dev-browser-token"];
+      const token =
+        bearer ??
+        (typeof tokenHeader === "string" ? tokenHeader : null) ??
+        (Array.isArray(tokenHeader) ? tokenHeader[0] : null);
+
+      if (token && token === authToken) return next();
+      res.status(401).json({ error: "unauthorized" });
+    });
+  }
+
+  const asyncHandler =
+    (fn: (req: Request, res: Response) => Promise<void> | void) =>
+    (req: Request, res: Response) => {
+      Promise.resolve(fn(req, res)).catch((err) => {
+        console.error("Request handler error:", err);
+        if (!res.headersSent) res.status(500).json({ error: "internal error" });
+      });
+    };
+
   // GET / - server info
   app.get("/", (_req: Request, res: Response) => {
     const response: ServerInfoResponse = { wsEndpoint };
@@ -131,7 +193,9 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
   });
 
   // POST /pages - get or create page
-  app.post("/pages", async (req: Request, res: Response) => {
+  app.post(
+    "/pages",
+    asyncHandler(async (req: Request, res: Response) => {
     const body = req.body as GetPageRequest;
     const { name } = body;
 
@@ -167,26 +231,30 @@ export async function serve(options: ServeOptions = {}): Promise<DevBrowserServe
 
     const response: GetPageResponse = { wsEndpoint, name, targetId: entry.targetId };
     res.json(response);
-  });
+    })
+  );
 
   // DELETE /pages/:name - close a page
-  app.delete("/pages/:name", async (req: Request<{ name: string }>, res: Response) => {
-    const name = decodeURIComponent(req.params.name);
-    const entry = registry.get(name);
+  app.delete(
+    "/pages/:name",
+    asyncHandler(async (req: Request, res: Response) => {
+      const name = String(req.params.name ?? "");
+      const entry = registry.get(name);
 
-    if (entry) {
-      await entry.page.close();
-      registry.delete(name);
-      res.json({ success: true });
-      return;
-    }
+      if (entry) {
+        await entry.page.close();
+        registry.delete(name);
+        res.json({ success: true });
+        return;
+      }
 
-    res.status(404).json({ error: "page not found" });
-  });
+      res.status(404).json({ error: "page not found" });
+    })
+  );
 
   // Start the server
-  const server = app.listen(port, () => {
-    console.log(`HTTP API server running on port ${port}`);
+  const server = app.listen(port, host, () => {
+    console.log(`HTTP API server running on http://${host}:${port}`);
   });
 
   // Track active connections for clean shutdown

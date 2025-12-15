@@ -85,6 +85,12 @@ bun run start-server
 
 Keep this terminal running while you use Amp.
 
+**Notes:**
+
+- The server binds to `127.0.0.1` by default.
+- It prefers ports `9222` (HTTP) and `9223` (CDP), but will automatically pick free ports if those are already in use (check the startup output).
+- Optional: set `DEV_BROWSER_TOKEN=...` and `DEV_BROWSER_REQUIRE_AUTH=true` to require a token for the HTTP API.
+
 #### Step 3: Use It!
 
 Prompt Claude to use it! Amp will automatically load the skill when needed.

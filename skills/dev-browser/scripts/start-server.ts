@@ -3,6 +3,7 @@ import { execSync } from "child_process";
 import { mkdirSync, existsSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { createServer } from "net";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const tmpDir = join(__dirname, "..", "tmp");
@@ -72,35 +73,65 @@ try {
   console.log("You may need to run: npx playwright install chromium");
 }
 
-// Kill any existing process on port 9222 (HTTP API) and 9223 (CDP)
-console.log("Checking for existing servers...");
-try {
-  // Find and kill processes on our ports
-  const ports = [9222, 9223];
-  for (const port of ports) {
-    try {
-      const pid = execSync(`lsof -ti:${port}`, { encoding: "utf-8" }).trim();
-      if (pid) {
-        console.log(`Killing existing process on port ${port} (PID: ${pid})`);
-        execSync(`kill -9 ${pid}`);
+async function getFreePort(host: string): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, host, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to determine free port")));
+        return;
       }
-    } catch {
-      // No process on this port, which is fine
-    }
-  }
-} catch {
-  // lsof not available or no processes found
+      const { port } = address;
+      server.close((err) => (err ? reject(err) : resolve(port)));
+    });
+  });
+}
+
+async function isPortAvailable(port: number, host: string): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.listen(port, host, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function choosePort(preferred: number, host: string, label: string): Promise<number> {
+  if (await isPortAvailable(preferred, host)) return preferred;
+  const port = await getFreePort(host);
+  console.warn(`${label} port ${preferred} is in use; using ${port} instead.`);
+  return port;
 }
 
 console.log("Starting dev browser server...");
 const headless = process.env.HEADLESS === "true";
+const host = process.env.DEV_BROWSER_HOST || "127.0.0.1";
+const preferredPort = Number(process.env.DEV_BROWSER_PORT || 9222);
+const preferredCdpPort = Number(process.env.DEV_BROWSER_CDP_PORT || 9223);
+const allowRemote = process.env.DEV_BROWSER_ALLOW_REMOTE === "true";
+const authToken = process.env.DEV_BROWSER_TOKEN;
+const requireAuth = process.env.DEV_BROWSER_REQUIRE_AUTH === "true";
+
+const port = await choosePort(preferredPort, host, "HTTP");
+const cdpPort = await choosePort(preferredCdpPort, host, "CDP");
+
 const server = await serve({
-  port: 9222,
+  host,
+  port,
   headless,
+  cdpHost: host,
+  cdpPort,
   profileDir,
+  allowRemote,
+  authToken,
+  requireAuth,
 });
 
 console.log(`Dev browser server started`);
+console.log(`  HTTP API: http://${host}:${server.port}`);
 console.log(`  WebSocket: ${server.wsEndpoint}`);
 console.log(`  Tmp directory: ${tmpDir}`);
 console.log(`  Profile directory: ${profileDir}`);

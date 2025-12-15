@@ -44,6 +44,26 @@ The first run may take longer while dependencies are installed. Subsequent runs 
 
 The server starts a Chromium browser with a REST API for page management (default: `http://localhost:9222`).
 
+### Network Binding and Ports
+
+By default the server binds to `127.0.0.1` and uses ports `9222` (HTTP) and `9223` (CDP). If a preferred port is already in use, it automatically picks a free port and prints it on startup.
+
+You can override with environment variables:
+
+- `DEV_BROWSER_HOST` (default: `127.0.0.1`)
+- `DEV_BROWSER_PORT` (default: `9222`)
+- `DEV_BROWSER_CDP_PORT` (default: `9223`)
+- `DEV_BROWSER_ALLOW_REMOTE=true` to bind to non-loopback hosts (strongly discouraged; CDP exposure is dangerous)
+
+### Optional HTTP API Auth
+
+If you want to require a token for the HTTP API, set:
+
+- `DEV_BROWSER_TOKEN=...`
+- `DEV_BROWSER_REQUIRE_AUTH=true`
+
+Client scripts will send `DEV_BROWSER_TOKEN` automatically, or you can pass it explicitly to `connect()`.
+
 ## How It Works
 
 1. **Server** launches a persistent Chromium browser and manages named pages via REST API
@@ -144,6 +164,12 @@ await client.disconnect(); // Disconnect (pages persist)
 // ARIA Snapshot methods for element discovery and interaction
 const snapshot = await client.getAISnapshot("name"); // Get ARIA accessibility tree
 const element = await client.selectSnapshotRef("name", "e5"); // Get element by ref
+```
+
+If auth is enabled on the server:
+
+```typescript
+const client = await connect("http://127.0.0.1:9222", { token: process.env.DEV_BROWSER_TOKEN });
 ```
 
 The `page` object is a standard Playwright Page—use normal Playwright methods.
