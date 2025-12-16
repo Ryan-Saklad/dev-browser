@@ -17,13 +17,23 @@ console.log("Creating profiles directory...");
 mkdirSync(profileDir, { recursive: true });
 
 // Install Playwright browsers if not already installed
-console.log("Checking Playwright browser installation...");
+// Browser to use - configurable via DEV_BROWSER_TYPE env var
+// Options: chromium (default), firefox, webkit
+const BROWSER_TYPE = (process.env.DEV_BROWSER_TYPE || "chromium").toLowerCase();
+const VALID_BROWSERS = ["chromium", "firefox", "webkit"];
+
+if (!VALID_BROWSERS.includes(BROWSER_TYPE)) {
+  console.error(`Invalid DEV_BROWSER_TYPE: ${BROWSER_TYPE}. Must be one of: ${VALID_BROWSERS.join(", ")}`);
+  process.exit(1);
+}
+
+console.log(`Checking Playwright ${BROWSER_TYPE} installation...`);
 
 function findPackageManager(): { name: string; command: string } | null {
   const managers = [
-    { name: "bun", command: "bunx playwright install chromium" },
-    { name: "pnpm", command: "pnpm exec playwright install chromium" },
-    { name: "npm", command: "npx playwright install chromium" },
+    { name: "bun", command: `bunx playwright install ${BROWSER_TYPE}` },
+    { name: "pnpm", command: `pnpm exec playwright install ${BROWSER_TYPE}` },
+    { name: "npm", command: `npx playwright install ${BROWSER_TYPE}` },
   ];
 
   for (const manager of managers) {
@@ -37,7 +47,7 @@ function findPackageManager(): { name: string; command: string } | null {
   return null;
 }
 
-function isChromiumInstalled(): boolean {
+function isBrowserInstalled(): boolean {
   const homeDir = process.env.HOME || process.env.USERPROFILE || "";
   const playwrightCacheDir = join(homeDir, ".cache", "ms-playwright");
 
@@ -45,18 +55,18 @@ function isChromiumInstalled(): boolean {
     return false;
   }
 
-  // Check for chromium directories (e.g., chromium-1148, chromium_headless_shell-1148)
+  // Check for browser directories (e.g., chromium-1148, firefox-1497)
   try {
     const entries = readdirSync(playwrightCacheDir);
-    return entries.some((entry) => entry.startsWith("chromium"));
+    return entries.some((entry) => entry.startsWith(BROWSER_TYPE));
   } catch {
     return false;
   }
 }
 
 try {
-  if (!isChromiumInstalled()) {
-    console.log("Playwright Chromium not found. Installing (this may take a minute)...");
+  if (!isBrowserInstalled()) {
+    console.log(`Playwright ${BROWSER_TYPE} not found. Installing (this may take a minute)...`);
 
     const pm = findPackageManager();
     if (!pm) {
@@ -65,13 +75,13 @@ try {
 
     console.log(`Using ${pm.name} to install Playwright...`);
     execSync(pm.command, { stdio: "inherit" });
-    console.log("Chromium installed successfully.");
+    console.log(`${BROWSER_TYPE} installed successfully.`);
   } else {
-    console.log("Playwright Chromium already installed.");
+    console.log(`Playwright ${BROWSER_TYPE} already installed.`);
   }
 } catch (error) {
   console.error("Failed to install Playwright browsers:", error);
-  console.log("You may need to run: npx playwright install chromium");
+  console.log(`You may need to run: npx playwright install ${BROWSER_TYPE}`);
 }
 
 async function getFreePort(host: string): Promise<number> {
